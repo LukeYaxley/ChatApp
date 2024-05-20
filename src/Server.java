@@ -1,65 +1,80 @@
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.PrintWriter;
-import java.net.ServerSocket;
-import java.net.Socket;
-import java.util.Scanner;
+import java.io.*;
+import java.net.*;
+import java.util.*;
 
 public class Server {
-    public static void main(String[] args){
-        final ServerSocket serverSocket ;
-        final Socket clientSocket ;
-        final BufferedReader in;
-        final PrintWriter out;
-        final Scanner sc=new Scanner(System.in);
+    private static final int PORT = 12345;
+    private static HashMap<String, ClientHandler> clients = new HashMap<>();
 
-        try {
-            serverSocket = new ServerSocket(5000);
-            clientSocket = serverSocket.accept();
-            out = new PrintWriter(clientSocket.getOutputStream());
-            in = new BufferedReader (new InputStreamReader(clientSocket.getInputStream()));
+    public static void main(String[] args) {
+        try (ServerSocket serverSocket = new ServerSocket(PORT)) {
+            System.out.println("Server started on port " + PORT);
 
-            Thread sender= new Thread(new Runnable() {
-                String msg; //variable that will contains the data writter by the user
-                @Override   // annotation to override the run method
-                public void run() {
-                    while(true){
-                        msg = sc.nextLine(); //reads data from user's keybord
-                        out.println(msg);    // write data stored in msg in the clientSocket
-                        out.flush();   // forces the sending of the data
-                    }
-                }
-            });
-            sender.start();
-
-            Thread receive= new Thread(new Runnable() {
-                String msg ;
-                @Override
-                public void run() {
-                    try {
-                        msg = in.readLine();
-                        //tant que le client est connecté
-                        while(msg!=null){
-                            System.out.println("Client : "+msg);
-                            msg = in.readLine();
-                        }
-
-                        System.out.println("Client déconecté");
-
-                        out.close();
-                        clientSocket.close();
-                        serverSocket.close();
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    }
-                }
-            });
-            receive.start();
+            while (true) {
+                Socket socket = serverSocket.accept();
+                ClientHandler clientHandler = new ClientHandler(socket);
+                new Thread(clientHandler).start();
+            }
         } catch (IOException e) {
             e.printStackTrace();
         }
+    }
 
+    public static synchronized void registerClient(String username, ClientHandler clientHandler) {
+        clients.put(username, clientHandler);
+    }
 
+    public static synchronized ClientHandler getClient(String username) {
+        return clients.get(username);
+    }
+
+    static class ClientHandler implements Runnable {
+        private Socket socket;
+        private String username;
+        private BufferedReader in;
+        private PrintWriter out;
+
+        public ClientHandler(Socket socket) {
+            this.socket = socket;
+        }
+
+        @Override
+        public void run() {
+            try {
+                in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                out = new PrintWriter(socket.getOutputStream(), true);
+
+                out.println("Enter your username: ");
+                username = in.readLine();
+                registerClient(username, this);
+
+                String received;
+                while ((received = in.readLine()) != null) {
+                    String[] parts = received.split(":", 2);
+                    if (parts.length == 2) {
+                        String recipient = parts[0];
+                        String message = parts[1];
+                        ClientHandler recipientHandler = getClient(recipient);
+                        if (recipientHandler != null) {
+                            recipientHandler.sendMessage(username + ": " + message);
+                        } else {
+                            out.println("User " + recipient + " not found.");
+                        }
+                    }
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+            } finally {
+                try {
+                    socket.close();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+
+        public void sendMessage(String message) {
+            out.println(message);
+        }
     }
 }
